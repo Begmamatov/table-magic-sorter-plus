@@ -106,12 +106,12 @@ const SortableRow = ({
 // Sortable Column Header Component
 const SortableColumnHeader = ({ 
   children, 
-  column, 
+  columnKey, 
   enableColumnDrag,
   ...props 
 }: { 
   children: React.ReactNode;
-  column: TableColumn;
+  columnKey: string;
   enableColumnDrag: boolean;
   [key: string]: any;
 }) => {
@@ -123,7 +123,7 @@ const SortableColumnHeader = ({
     transition,
     isDragging,
   } = useSortable({
-    id: column.key,
+    id: columnKey,
     disabled: !enableColumnDrag,
   });
 
@@ -385,7 +385,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     const processedColumns = visibleColumns.map((column) => ({
       ...column,
       onHeaderCell: () => ({
-        column,
+        columnKey: column.key,
         enableColumnDrag: settings.enableColumnDrag,
       }),
       render: (value: any, record: any) => {
@@ -412,13 +412,13 @@ export const DataTable: React.FC<DataTableProps> = ({
   const components = {
     header: {
       cell: (props: any) => {
-        const { column, enableColumnDrag, ...restProps } = props;
-        if (column?.key === 'drag-handle') {
+        const { columnKey, enableColumnDrag, ...restProps } = props;
+        if (!columnKey) {
           return <th {...restProps} />;
         }
         return (
           <SortableColumnHeader
-            column={column}
+            columnKey={columnKey}
             enableColumnDrag={enableColumnDrag}
             {...restProps}
           />
