@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +31,7 @@ import {
   SortableContext,
   arrayMove,
   verticalListSortingStrategy,
+  horizontalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -139,22 +139,43 @@ const SortableRow = ({
   );
 };
 
-// Resizable Header Component
-const ResizableHeader = ({ 
+// Sortable Column Header Component
+const SortableColumnHeader = ({ 
   column, 
   onResize, 
-  enableResize 
+  enableResize,
+  enableColumnDrag 
 }: { 
   column: TableColumn; 
-  onResize: (key: string, width: number) => void;
+  onResize?: (key: string, width: number) => void;
   enableResize: boolean;
+  enableColumnDrag: boolean;
 }) => {
   const [isResizing, setIsResizing] = useState(false);
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: column.key,
+    disabled: !enableColumnDrag,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!enableResize) return;
     
     e.preventDefault();
+    e.stopPropagation();
     setIsResizing(true);
     
     const startX = e.clientX;
@@ -162,7 +183,7 @@ const ResizableHeader = ({
 
     const handleMouseMove = (e: MouseEvent) => {
       const newWidth = Math.max(80, startWidth + (e.clientX - startX));
-      onResize(column.key, newWidth);
+      onResize?.(column.key, newWidth);
     };
 
     const handleMouseUp = () => {
@@ -177,11 +198,22 @@ const ResizableHeader = ({
 
   return (
     <th 
-      className="px-4 py-4 text-left font-medium text-white bg-green-500 relative group"
-      style={{ width: column.width }}
+      ref={setNodeRef}
+      style={{ ...style, width: column.width }}
+      {...(enableColumnDrag ? attributes : {})}
+      className={`px-4 py-4 text-left font-medium text-white bg-green-500 relative group ${
+        isDragging ? 'shadow-lg bg-green-600' : ''
+      }`}
     >
       <div className="flex items-center justify-between">
-        <span>{column.title}</span>
+        <span className="flex items-center gap-2">
+          {column.title}
+          {enableColumnDrag && (
+            <div {...listeners} className="cursor-grab hover:cursor-grabbing">
+              <GripVertical className="h-3 w-3 text-white/70 hover:text-white transition-colors" />
+            </div>
+          )}
+        </span>
       </div>
       {enableResize && (
         <div
@@ -279,9 +311,11 @@ export const DataTable: React.FC<DataTableProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [draggedRow, setDraggedRow] = useState<string | null>(null);
+  const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
   const [settings, setSettings] = useState({
     enableRowDrag,
     enableColumnResize,
+    enableColumnDrag: true, // Column drag enabled by default
   });
 
   const sensors = useSensors(
@@ -318,7 +352,16 @@ export const DataTable: React.FC<DataTableProps> = ({
   const totalPages = Math.ceil(filteredData.length / pageSize);
 
   const handleDragStart = (event: DragStartEvent) => {
-    setDraggedRow(event.active.id as string);
+    const { active } = event;
+    
+    // Check if it's a column being dragged
+    const isColumn = columns.some(col => col.key === active.id);
+    
+    if (isColumn) {
+      setDraggedColumn(active.id as string);
+    } else {
+      setDraggedRow(active.id as string);
+    }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -326,18 +369,33 @@ export const DataTable: React.FC<DataTableProps> = ({
     
     if (!over || active.id === over.id) {
       setDraggedRow(null);
+      setDraggedColumn(null);
       return;
     }
 
-    const oldIndex = data.findIndex(item => item.key === active.id);
-    const newIndex = data.findIndex(item => item.key === over.id);
+    if (draggedColumn) {
+      // Handle column reordering
+      const oldIndex = columns.findIndex(col => col.key === active.id);
+      const newIndex = columns.findIndex(col => col.key === over.id);
 
-    if (oldIndex !== newIndex) {
-      const newData = arrayMove(data, oldIndex, newIndex);
-      setData(newData);
-      onDataChange?.(newData);
+      if (oldIndex !== newIndex) {
+        const newColumns = arrayMove(columns, oldIndex, newIndex);
+        setColumns(newColumns);
+      }
+    } else if (draggedRow) {
+      // Handle row reordering
+      const oldIndex = data.findIndex(item => item.key === active.id);
+      const newIndex = data.findIndex(item => item.key === over.id);
+
+      if (oldIndex !== newIndex) {
+        const newData = arrayMove(data, oldIndex, newIndex);
+        setData(newData);
+        onDataChange?.(newData);
+      }
     }
+
     setDraggedRow(null);
+    setDraggedColumn(null);
   };
 
   const handleColumnResize = useCallback((key: string, width: number) => {
@@ -357,6 +415,26 @@ export const DataTable: React.FC<DataTableProps> = ({
   }, []);
 
   const visibleColumns = columns.filter(col => !col.hidden);
+
+  // Enhanced columns with drag handle for rows
+  const enhancedColumns = useMemo(() => {
+    let cols = [];
+
+    // Add drag handle column for rows if enabled
+    if (settings.enableRowDrag) {
+      cols.push({
+        key: 'drag-handle',
+        title: '',
+        dataIndex: 'drag-handle',
+        width: 50,
+        render: () => null, // Will be handled by SortableRow
+      });
+    }
+
+    // Add visible columns
+    cols = [...cols, ...visibleColumns];
+    return cols;
+  }, [visibleColumns, settings.enableRowDrag]);
 
   return (
     <div className="space-y-6">
@@ -422,18 +500,36 @@ export const DataTable: React.FC<DataTableProps> = ({
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-green-500">
-                <tr className="rounded-t-lg">
+                <tr>
                   {settings.enableRowDrag && (
                     <th className="px-4 py-4 text-left font-medium text-white w-12"></th>
                   )}
-                  {visibleColumns.map((column) => (
-                    <ResizableHeader
-                      key={column.key}
-                      column={column}
-                      onResize={handleColumnResize}
-                      enableResize={settings.enableColumnResize}
-                    />
-                  ))}
+                  {settings.enableColumnDrag ? (
+                    <SortableContext
+                      items={visibleColumns.map(col => col.key)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      {visibleColumns.map((column) => (
+                        <SortableColumnHeader
+                          key={column.key}
+                          column={column}
+                          onResize={handleColumnResize}
+                          enableResize={settings.enableColumnResize}
+                          enableColumnDrag={settings.enableColumnDrag}
+                        />
+                      ))}
+                    </SortableContext>
+                  ) : (
+                    visibleColumns.map((column) => (
+                      <SortableColumnHeader
+                        key={column.key}
+                        column={column}
+                        onResize={handleColumnResize}
+                        enableResize={settings.enableColumnResize}
+                        enableColumnDrag={false}
+                      />
+                    ))
+                  )}
                 </tr>
               </thead>
               <tbody className="bg-white">
@@ -466,7 +562,13 @@ export const DataTable: React.FC<DataTableProps> = ({
           </div>
 
           <DragOverlay>
-            {draggedRow ? (
+            {draggedColumn ? (
+              <div className="bg-green-500 text-white p-4 rounded-lg shadow-lg border border-green-200">
+                <span className="text-white font-medium">
+                  {columns.find(col => col.key === draggedColumn)?.title}
+                </span>
+              </div>
+            ) : draggedRow ? (
               <div className="bg-white p-4 rounded-lg shadow-lg border border-green-200">
                 <span className="text-gray-600">Moving row...</span>
               </div>
