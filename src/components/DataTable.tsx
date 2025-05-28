@@ -249,7 +249,7 @@ const SettingsModal = ({
                     onCheckedChange={(value) => column.toggleVisibility(!!value)}
                   />
                   <label htmlFor={column.id} className="text-sm">
-                    {column.columnDef.header}
+                    {typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id}
                   </label>
                 </div>
               ))}
@@ -311,7 +311,7 @@ export const DataTable: React.FC<DataTableProps> = ({
     return initialColumns.map((col) => ({
       id: col.key,
       accessorKey: col.dataIndex,
-      header: col.title,
+      header: col.title, // Use string directly instead of function
       size: col.width || 150,
       cell: ({ getValue, row }) => {
         const value = getValue();
