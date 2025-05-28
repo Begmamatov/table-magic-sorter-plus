@@ -133,10 +133,14 @@ const SortableRow = ({
 // Sortable Column Header Component
 const SortableColumnHeader = ({ 
   header,
-  enableColumnDrag 
+  enableColumnDrag,
+  enableColumnResize,
+  onColumnResize
 }: { 
   header: any;
   enableColumnDrag: boolean;
+  enableColumnResize: boolean;
+  onColumnResize?: (columnId: string, width: number) => void;
 }) => {
   const {
     attributes,
@@ -150,10 +154,37 @@ const SortableColumnHeader = ({
     disabled: !enableColumnDrag,
   });
 
+  const [isResizing, setIsResizing] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [startWidth, setStartWidth] = useState(0);
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!enableColumnResize) return;
+    
+    setIsResizing(true);
+    setStartX(e.clientX);
+    setStartWidth(header.getSize());
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const diff = e.clientX - startX;
+      const newWidth = Math.max(50, startWidth + diff);
+      header.column.setSize(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   return (
@@ -171,7 +202,9 @@ const SortableColumnHeader = ({
             className="flex items-center gap-2 cursor-pointer select-none"
             onClick={header.column.getToggleSortingHandler()}
           >
-            {flexRender(header.column.columnDef.header, header.getContext())}
+            <span>
+              {flexRender(header.column.columnDef.header, header.getContext())}
+            </span>
             {header.column.getCanSort() && (
               <div className="flex flex-col">
                 {header.column.getIsSorted() === 'asc' ? (
@@ -190,6 +223,12 @@ const SortableColumnHeader = ({
             </div>
           )}
         </div>
+        {enableColumnResize && (
+          <div
+            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-white/30 hover:bg-white/50 opacity-0 group-hover:opacity-100 transition-opacity"
+            onMouseDown={handleMouseDown}
+          />
+        )}
       </div>
     </th>
   );
@@ -235,6 +274,13 @@ const SettingsModal = ({
                   onCheckedChange={(checked) => onSettingsChange('enableColumnResize', checked)}
                 />
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Column Drag & Drop</span>
+                <Switch
+                  checked={settings.enableColumnDrag}
+                  onCheckedChange={(checked) => onSettingsChange('enableColumnDrag', checked)}
+                />
+              </div>
             </div>
           </div>
           <Separator />
@@ -275,6 +321,7 @@ export const DataTable: React.FC<DataTableProps> = ({
   const [globalFilter, setGlobalFilter] = useState('');
   const [draggedRow, setDraggedRow] = useState<string | null>(null);
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
+  const [columnOrder, setColumnOrder] = useState<string[]>(initialColumns.map(col => col.key));
   const [settings, setSettings] = useState({
     enableRowDrag,
     enableColumnResize,
@@ -306,12 +353,16 @@ export const DataTable: React.FC<DataTableProps> = ({
     }
   };
 
-  // Convert columns to TanStack format
+  // Convert columns to TanStack format with proper ordering
   const tanstackColumns = useMemo<ColumnDef<TableData>[]>(() => {
-    return initialColumns.map((col) => ({
+    const orderedColumns = columnOrder.map(key => 
+      initialColumns.find(col => col.key === key)
+    ).filter(Boolean) as TableColumn[];
+
+    return orderedColumns.map((col) => ({
       id: col.key,
       accessorKey: col.dataIndex,
-      header: col.title, // Use string directly instead of function
+      header: col.title,
       size: col.width || 150,
       cell: ({ getValue, row }) => {
         const value = getValue();
@@ -328,7 +379,7 @@ export const DataTable: React.FC<DataTableProps> = ({
         return <span className="text-gray-900">{value as string}</span>;
       },
     }));
-  }, [initialColumns]);
+  }, [initialColumns, columnOrder]);
 
   const table = useReactTable({
     data,
@@ -340,8 +391,10 @@ export const DataTable: React.FC<DataTableProps> = ({
     globalFilterFn: 'includesString',
     state: {
       globalFilter,
+      columnOrder,
     },
     onGlobalFilterChange: setGlobalFilter,
+    onColumnOrderChange: setColumnOrder,
     initialState: {
       pagination: {
         pageSize: 15,
@@ -371,7 +424,16 @@ export const DataTable: React.FC<DataTableProps> = ({
       return;
     }
 
-    if (draggedRow) {
+    if (draggedColumn) {
+      // Handle column reordering
+      const oldIndex = columnOrder.findIndex(id => id === active.id);
+      const newIndex = columnOrder.findIndex(id => id === over.id);
+
+      if (oldIndex !== newIndex) {
+        const newColumnOrder = arrayMove(columnOrder, oldIndex, newIndex);
+        setColumnOrder(newColumnOrder);
+      }
+    } else if (draggedRow) {
       // Handle row reordering
       const oldIndex = data.findIndex(item => item.key === active.id);
       const newIndex = data.findIndex(item => item.key === over.id);
@@ -472,6 +534,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                             key={header.id}
                             header={header}
                             enableColumnDrag={settings.enableColumnDrag}
+                            enableColumnResize={settings.enableColumnResize}
                           />
                         ))}
                       </SortableContext>
@@ -481,6 +544,7 @@ export const DataTable: React.FC<DataTableProps> = ({
                           key={header.id}
                           header={header}
                           enableColumnDrag={false}
+                          enableColumnResize={settings.enableColumnResize}
                         />
                       ))
                     )}
