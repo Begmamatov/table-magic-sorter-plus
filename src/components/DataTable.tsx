@@ -134,13 +134,11 @@ const SortableRow = ({
 const SortableColumnHeader = ({ 
   header,
   enableColumnDrag,
-  enableColumnResize,
-  onColumnResize
+  enableColumnResize
 }: { 
   header: any;
   enableColumnDrag: boolean;
   enableColumnResize: boolean;
-  onColumnResize?: (columnId: string, width: number) => void;
 }) => {
   const {
     attributes,
@@ -155,25 +153,27 @@ const SortableColumnHeader = ({
   });
 
   const [isResizing, setIsResizing] = useState(false);
-  const [startX, setStartX] = useState(0);
-  const [startWidth, setStartWidth] = useState(0);
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    width: header.getSize(),
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!enableColumnResize) return;
     
+    e.preventDefault();
     setIsResizing(true);
-    setStartX(e.clientX);
-    setStartWidth(header.getSize());
+    
+    const startX = e.clientX;
+    const startWidth = header.getSize();
     
     const handleMouseMove = (e: MouseEvent) => {
       const diff = e.clientX - startX;
-      const newWidth = Math.max(50, startWidth + diff);
+      const newWidth = Math.max(100, startWidth + diff);
+      header.column.resetSize();
       header.column.setSize(newWidth);
     };
 
@@ -185,12 +185,12 @@ const SortableColumnHeader = ({
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  };
+  }, [enableColumnResize, header]);
 
   return (
     <th 
       ref={setNodeRef}
-      style={{ ...style, width: header.getSize() }}
+      style={style}
       {...(enableColumnDrag ? attributes : {})}
       className={`px-4 py-4 text-left font-medium text-white bg-green-500 relative group ${
         isDragging ? 'shadow-lg bg-green-600' : ''
@@ -225,8 +225,9 @@ const SortableColumnHeader = ({
         </div>
         {enableColumnResize && (
           <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-white/30 hover:bg-white/50 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize bg-transparent hover:bg-white/20 transition-colors"
             onMouseDown={handleMouseDown}
+            style={{ cursor: isResizing ? 'col-resize' : 'col-resize' }}
           />
         )}
       </div>
@@ -322,6 +323,13 @@ export const DataTable: React.FC<DataTableProps> = ({
   const [draggedRow, setDraggedRow] = useState<string | null>(null);
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
   const [columnOrder, setColumnOrder] = useState<string[]>(initialColumns.map(col => col.key));
+  const [columnSizing, setColumnSizing] = useState<Record<string, number>>(() => {
+    const sizing: Record<string, number> = {};
+    initialColumns.forEach(col => {
+      sizing[col.key] = col.width || 150;
+    });
+    return sizing;
+  });
   const [settings, setSettings] = useState({
     enableRowDrag,
     enableColumnResize,
@@ -363,7 +371,8 @@ export const DataTable: React.FC<DataTableProps> = ({
       id: col.key,
       accessorKey: col.dataIndex,
       header: col.title,
-      size: col.width || 150,
+      size: columnSizing[col.key] || col.width || 150,
+      enableResizing: settings.enableColumnResize,
       cell: ({ getValue, row }) => {
         const value = getValue();
         if (col.render) {
@@ -379,7 +388,7 @@ export const DataTable: React.FC<DataTableProps> = ({
         return <span className="text-gray-900">{value as string}</span>;
       },
     }));
-  }, [initialColumns, columnOrder]);
+  }, [initialColumns, columnOrder, columnSizing, settings.enableColumnResize]);
 
   const table = useReactTable({
     data,
@@ -389,12 +398,16 @@ export const DataTable: React.FC<DataTableProps> = ({
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     globalFilterFn: 'includesString',
+    enableColumnResizing: settings.enableColumnResize,
+    columnResizeMode: 'onChange',
     state: {
       globalFilter,
       columnOrder,
+      columnSizing,
     },
     onGlobalFilterChange: setGlobalFilter,
     onColumnOrderChange: setColumnOrder,
+    onColumnSizingChange: setColumnSizing,
     initialState: {
       pagination: {
         pageSize: 15,
@@ -517,7 +530,7 @@ export const DataTable: React.FC<DataTableProps> = ({
           onDragEnd={handleDragEnd}
         >
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full" style={{ width: table.getTotalSize() }}>
               <thead className="bg-green-500">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
