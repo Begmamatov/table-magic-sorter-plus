@@ -1,4 +1,15 @@
+
 import React, { useState, useCallback, useMemo } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  flexRender,
+  ColumnDef,
+  Row,
+} from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -14,7 +25,10 @@ import {
   GripVertical, 
   Search,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import {
   DndContext,
@@ -68,12 +82,10 @@ interface DataTableProps {
 
 // Sortable Row Component
 const SortableRow = ({ 
-  data, 
-  columns, 
+  row, 
   enableRowDrag 
 }: { 
-  data: TableData; 
-  columns: TableColumn[];
+  row: Row<TableData>; 
   enableRowDrag: boolean;
 }) => {
   const {
@@ -84,7 +96,7 @@ const SortableRow = ({
     transition,
     isDragging,
   } = useSortable({
-    id: data.key,
+    id: row.original.key,
   });
 
   const style = {
@@ -92,19 +104,6 @@ const SortableRow = ({
     transition,
     opacity: isDragging ? 0.5 : 1,
   };
-
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'active':
-        return 'bg-green-50 text-green-700 border-green-200';
-      case 'inactive':
-        return 'bg-red-50 text-red-700 border-red-200';
-      default:
-        return 'bg-gray-50 text-gray-700 border-gray-200';
-    }
-  };
-
-  const visibleColumns = columns.filter(col => !col.hidden);
 
   return (
     <tr
@@ -122,17 +121,9 @@ const SortableRow = ({
           </div>
         </td>
       )}
-      {visibleColumns.map((column) => (
-        <td key={column.key} className="px-4 py-4" style={{ width: column.width }}>
-          {column.render ? (
-            column.render(data[column.dataIndex], data)
-          ) : column.dataIndex === 'status' ? (
-            <Badge className={`${getStatusColor(data[column.dataIndex])} border`}>
-              {data[column.dataIndex]}
-            </Badge>
-          ) : (
-            <span className="text-gray-900">{data[column.dataIndex]}</span>
-          )}
+      {row.getVisibleCells().map((cell) => (
+        <td key={cell.id} className="px-4 py-4" style={{ width: cell.column.getSize() }}>
+          {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
       ))}
     </tr>
@@ -141,18 +132,14 @@ const SortableRow = ({
 
 // Sortable Column Header Component
 const SortableColumnHeader = ({ 
-  column, 
-  onResize, 
-  enableResize,
-  enableColumnDrag 
+  header,
+  enableColumnDrag,
+  enableColumnResize
 }: { 
-  column: TableColumn; 
-  onResize?: (key: string, width: number) => void;
-  enableResize: boolean;
+  header: any;
   enableColumnDrag: boolean;
+  enableColumnResize: boolean;
 }) => {
-  const [isResizing, setIsResizing] = useState(false);
-
   const {
     attributes,
     listeners,
@@ -161,29 +148,33 @@ const SortableColumnHeader = ({
     transition,
     isDragging,
   } = useSortable({
-    id: column.key,
+    id: header.id,
     disabled: !enableColumnDrag,
   });
+
+  const [isResizing, setIsResizing] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    width: header.getSize(),
   };
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!enableResize) return;
+    if (!enableColumnResize) return;
     
     e.preventDefault();
-    e.stopPropagation();
     setIsResizing(true);
     
     const startX = e.clientX;
-    const startWidth = column.width || 150;
-
+    const startWidth = header.getSize();
+    
     const handleMouseMove = (e: MouseEvent) => {
-      const newWidth = Math.max(80, startWidth + (e.clientX - startX));
-      onResize?.(column.key, newWidth);
+      const diff = e.clientX - startX;
+      const newWidth = Math.max(100, startWidth + diff);
+      header.column.resetSize();
+      header.column.setSize(newWidth);
     };
 
     const handleMouseUp = () => {
@@ -194,48 +185,63 @@ const SortableColumnHeader = ({
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [column.key, column.width, onResize, enableResize]);
+  }, [enableColumnResize, header]);
 
   return (
     <th 
       ref={setNodeRef}
-      style={{ ...style, width: column.width }}
+      style={style}
       {...(enableColumnDrag ? attributes : {})}
       className={`px-4 py-4 text-left font-medium text-white bg-green-500 relative group ${
         isDragging ? 'shadow-lg bg-green-600' : ''
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="flex items-center gap-2">
-          {column.title}
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={header.column.getToggleSortingHandler()}
+          >
+            <span>
+              {flexRender(header.column.columnDef.header, header.getContext())}
+            </span>
+            {header.column.getCanSort() && (
+              <div className="flex flex-col">
+                {header.column.getIsSorted() === 'asc' ? (
+                  <ArrowUp className="h-3 w-3" />
+                ) : header.column.getIsSorted() === 'desc' ? (
+                  <ArrowDown className="h-3 w-3" />
+                ) : (
+                  <ArrowUpDown className="h-3 w-3" />
+                )}
+              </div>
+            )}
+          </div>
           {enableColumnDrag && (
             <div {...listeners} className="cursor-grab hover:cursor-grabbing">
               <GripVertical className="h-3 w-3 text-white/70 hover:text-white transition-colors" />
             </div>
           )}
-        </span>
+        </div>
+        {enableColumnResize && (
+          <div
+            className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize bg-transparent hover:bg-white/20 transition-colors"
+            onMouseDown={handleMouseDown}
+            style={{ cursor: isResizing ? 'col-resize' : 'col-resize' }}
+          />
+        )}
       </div>
-      {enableResize && (
-        <div
-          className={`absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-green-400 transition-colors ${
-            isResizing ? 'bg-green-400' : 'bg-transparent'
-          } group-hover:bg-green-400/50`}
-          onMouseDown={handleMouseDown}
-        />
-      )}
     </th>
   );
 };
 
 // Settings Modal Component
 const SettingsModal = ({ 
-  columns, 
-  onColumnToggle, 
+  table,
   settings, 
   onSettingsChange 
 }: {
-  columns: TableColumn[];
-  onColumnToggle: (key: string) => void;
+  table: any;
   settings: any;
   onSettingsChange: (key: string, value: boolean) => void;
 }) => {
@@ -269,21 +275,28 @@ const SettingsModal = ({
                   onCheckedChange={(checked) => onSettingsChange('enableColumnResize', checked)}
                 />
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Column Drag & Drop</span>
+                <Switch
+                  checked={settings.enableColumnDrag}
+                  onCheckedChange={(checked) => onSettingsChange('enableColumnDrag', checked)}
+                />
+              </div>
             </div>
           </div>
           <Separator />
           <div>
             <h4 className="font-medium text-gray-900 mb-3">Column Visibility</h4>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {columns.map((column) => (
-                <div key={column.key} className="flex items-center space-x-2">
+              {table.getAllLeafColumns().map((column: any) => (
+                <div key={column.id} className="flex items-center space-x-2">
                   <Checkbox
-                    id={column.key}
-                    checked={!column.hidden}
-                    onCheckedChange={() => onColumnToggle(column.key)}
+                    id={column.id}
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
                   />
-                  <label htmlFor={column.key} className="text-sm">
-                    {column.title}
+                  <label htmlFor={column.id} className="text-sm">
+                    {typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id}
                   </label>
                 </div>
               ))}
@@ -306,16 +319,21 @@ export const DataTable: React.FC<DataTableProps> = ({
   pagination = true,
 }) => {
   const [data, setData] = useState(initialData);
-  const [columns, setColumns] = useState(initialColumns);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
+  const [globalFilter, setGlobalFilter] = useState('');
   const [draggedRow, setDraggedRow] = useState<string | null>(null);
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
+  const [columnOrder, setColumnOrder] = useState<string[]>(initialColumns.map(col => col.key));
+  const [columnSizing, setColumnSizing] = useState<Record<string, number>>(() => {
+    const sizing: Record<string, number> = {};
+    initialColumns.forEach(col => {
+      sizing[col.key] = col.width || 150;
+    });
+    return sizing;
+  });
   const [settings, setSettings] = useState({
     enableRowDrag,
     enableColumnResize,
-    enableColumnDrag: true, // Column drag enabled by default
+    enableColumnDrag: true,
   });
 
   const sensors = useSensors(
@@ -332,30 +350,76 @@ export const DataTable: React.FC<DataTableProps> = ({
     }),
   );
 
-  // Filter data based on search term
-  const filteredData = useMemo(() => {
-    if (!searchTerm) return data;
-    return data.filter(item =>
-      Object.values(item).some(value =>
-        String(value).toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    );
-  }, [data, searchTerm]);
+  const getStatusColor = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'active':
+        return 'bg-green-50 text-green-700 border-green-200';
+      case 'inactive':
+        return 'bg-red-50 text-red-700 border-red-200';
+      default:
+        return 'bg-gray-50 text-gray-700 border-gray-200';
+    }
+  };
 
-  // Paginate data
-  const paginatedData = useMemo(() => {
-    if (!pagination) return filteredData;
-    const startIndex = (currentPage - 1) * pageSize;
-    return filteredData.slice(startIndex, startIndex + pageSize);
-  }, [filteredData, currentPage, pageSize, pagination]);
+  // Convert columns to TanStack format with proper ordering
+  const tanstackColumns = useMemo<ColumnDef<TableData>[]>(() => {
+    const orderedColumns = columnOrder.map(key => 
+      initialColumns.find(col => col.key === key)
+    ).filter(Boolean) as TableColumn[];
 
-  const totalPages = Math.ceil(filteredData.length / pageSize);
+    return orderedColumns.map((col) => ({
+      id: col.key,
+      accessorKey: col.dataIndex,
+      header: col.title,
+      size: columnSizing[col.key] || col.width || 150,
+      enableResizing: settings.enableColumnResize,
+      cell: ({ getValue, row }) => {
+        const value = getValue();
+        if (col.render) {
+          return col.render(value, row.original);
+        }
+        if (col.dataIndex === 'status') {
+          return (
+            <Badge className={`${getStatusColor(value as string)} border`}>
+              {value as string}
+            </Badge>
+          );
+        }
+        return <span className="text-gray-900">{value as string}</span>;
+      },
+    }));
+  }, [initialColumns, columnOrder, columnSizing, settings.enableColumnResize]);
+
+  const table = useReactTable({
+    data,
+    columns: tanstackColumns,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    globalFilterFn: 'includesString',
+    enableColumnResizing: settings.enableColumnResize,
+    columnResizeMode: 'onChange',
+    state: {
+      globalFilter,
+      columnOrder,
+      columnSizing,
+    },
+    onGlobalFilterChange: setGlobalFilter,
+    onColumnOrderChange: setColumnOrder,
+    onColumnSizingChange: setColumnSizing,
+    initialState: {
+      pagination: {
+        pageSize: 15,
+      },
+    },
+  });
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     
     // Check if it's a column being dragged
-    const isColumn = columns.some(col => col.key === active.id);
+    const isColumn = table.getAllLeafColumns().some((col: any) => col.id === active.id);
     
     if (isColumn) {
       setDraggedColumn(active.id as string);
@@ -375,12 +439,12 @@ export const DataTable: React.FC<DataTableProps> = ({
 
     if (draggedColumn) {
       // Handle column reordering
-      const oldIndex = columns.findIndex(col => col.key === active.id);
-      const newIndex = columns.findIndex(col => col.key === over.id);
+      const oldIndex = columnOrder.findIndex(id => id === active.id);
+      const newIndex = columnOrder.findIndex(id => id === over.id);
 
       if (oldIndex !== newIndex) {
-        const newColumns = arrayMove(columns, oldIndex, newIndex);
-        setColumns(newColumns);
+        const newColumnOrder = arrayMove(columnOrder, oldIndex, newIndex);
+        setColumnOrder(newColumnOrder);
       }
     } else if (draggedRow) {
       // Handle row reordering
@@ -398,43 +462,9 @@ export const DataTable: React.FC<DataTableProps> = ({
     setDraggedColumn(null);
   };
 
-  const handleColumnResize = useCallback((key: string, width: number) => {
-    setColumns(prev => prev.map(col => 
-      col.key === key ? { ...col, width } : col
-    ));
-  }, []);
-
-  const handleColumnToggle = useCallback((key: string) => {
-    setColumns(prev => prev.map(col => 
-      col.key === key ? { ...col, hidden: !col.hidden } : col
-    ));
-  }, []);
-
   const handleSettingsChange = useCallback((key: string, value: boolean) => {
     setSettings(prev => ({ ...prev, [key]: value }));
   }, []);
-
-  const visibleColumns = columns.filter(col => !col.hidden);
-
-  // Enhanced columns with drag handle for rows
-  const enhancedColumns = useMemo(() => {
-    let cols = [];
-
-    // Add drag handle column for rows if enabled
-    if (settings.enableRowDrag) {
-      cols.push({
-        key: 'drag-handle',
-        title: '',
-        dataIndex: 'drag-handle',
-        width: 50,
-        render: () => null, // Will be handled by SortableRow
-      });
-    }
-
-    // Add visible columns
-    cols = [...cols, ...visibleColumns];
-    return cols;
-  }, [visibleColumns, settings.enableRowDrag]);
 
   return (
     <div className="space-y-6">
@@ -447,8 +477,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Search..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={globalFilter}
+                  onChange={(e) => setGlobalFilter(e.target.value)}
                   className="pl-10 w-64 border-green-200 focus:border-green-500"
                 />
               </div>
@@ -463,8 +493,7 @@ export const DataTable: React.FC<DataTableProps> = ({
           
           <div className="flex items-center gap-4">
             <SettingsModal
-              columns={columns}
-              onColumnToggle={handleColumnToggle}
+              table={table}
               settings={settings}
               onSettingsChange={handleSettingsChange}
             />
@@ -472,7 +501,10 @@ export const DataTable: React.FC<DataTableProps> = ({
             {pagination && (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-600">Results per page:</span>
-                <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                <Select 
+                  value={table.getState().pagination.pageSize.toString()} 
+                  onValueChange={(value) => table.setPageSize(Number(value))}
+                >
                   <SelectTrigger className="w-20 border-green-200">
                     <SelectValue />
                   </SelectTrigger>
@@ -498,61 +530,59 @@ export const DataTable: React.FC<DataTableProps> = ({
           onDragEnd={handleDragEnd}
         >
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full" style={{ width: table.getTotalSize() }}>
               <thead className="bg-green-500">
-                <tr>
-                  {settings.enableRowDrag && (
-                    <th className="px-4 py-4 text-left font-medium text-white w-12"></th>
-                  )}
-                  {settings.enableColumnDrag ? (
-                    <SortableContext
-                      items={visibleColumns.map(col => col.key)}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {visibleColumns.map((column) => (
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id}>
+                    {settings.enableRowDrag && (
+                      <th className="px-4 py-4 text-left font-medium text-white w-12"></th>
+                    )}
+                    {settings.enableColumnDrag ? (
+                      <SortableContext
+                        items={headerGroup.headers.map(header => header.id)}
+                        strategy={horizontalListSortingStrategy}
+                      >
+                        {headerGroup.headers.map((header) => (
+                          <SortableColumnHeader
+                            key={header.id}
+                            header={header}
+                            enableColumnDrag={settings.enableColumnDrag}
+                            enableColumnResize={settings.enableColumnResize}
+                          />
+                        ))}
+                      </SortableContext>
+                    ) : (
+                      headerGroup.headers.map((header) => (
                         <SortableColumnHeader
-                          key={column.key}
-                          column={column}
-                          onResize={handleColumnResize}
-                          enableResize={settings.enableColumnResize}
-                          enableColumnDrag={settings.enableColumnDrag}
+                          key={header.id}
+                          header={header}
+                          enableColumnDrag={false}
+                          enableColumnResize={settings.enableColumnResize}
                         />
-                      ))}
-                    </SortableContext>
-                  ) : (
-                    visibleColumns.map((column) => (
-                      <SortableColumnHeader
-                        key={column.key}
-                        column={column}
-                        onResize={handleColumnResize}
-                        enableResize={settings.enableColumnResize}
-                        enableColumnDrag={false}
-                      />
-                    ))
-                  )}
-                </tr>
+                      ))
+                    )}
+                  </tr>
+                ))}
               </thead>
               <tbody className="bg-white">
                 {settings.enableRowDrag ? (
                   <SortableContext
-                    items={paginatedData.map(item => item.key)}
+                    items={table.getRowModel().rows.map(row => row.original.key)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {paginatedData.map((item) => (
+                    {table.getRowModel().rows.map((row) => (
                       <SortableRow
-                        key={item.key}
-                        data={item}
-                        columns={columns}
+                        key={row.original.key}
+                        row={row}
                         enableRowDrag={settings.enableRowDrag}
                       />
                     ))}
                   </SortableContext>
                 ) : (
-                  paginatedData.map((item) => (
+                  table.getRowModel().rows.map((row) => (
                     <SortableRow
-                      key={item.key}
-                      data={item}
-                      columns={columns}
+                      key={row.original.key}
+                      row={row}
                       enableRowDrag={false}
                     />
                   ))
@@ -565,7 +595,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             {draggedColumn ? (
               <div className="bg-green-500 text-white p-4 rounded-lg shadow-lg border border-green-200">
                 <span className="text-white font-medium">
-                  {columns.find(col => col.key === draggedColumn)?.title}
+                  {table.getAllLeafColumns().find((col: any) => col.id === draggedColumn)?.columnDef.header}
                 </span>
               </div>
             ) : draggedRow ? (
@@ -581,28 +611,31 @@ export const DataTable: React.FC<DataTableProps> = ({
       {pagination && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-600">
-            Showing {Math.min((currentPage - 1) * pageSize + 1, filteredData.length)} to{' '}
-            {Math.min(currentPage * pageSize, filteredData.length)} of {filteredData.length} results
+            Showing {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1} to{' '}
+            {Math.min((table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize, table.getFilteredRowModel().rows.length)} of {table.getFilteredRowModel().rows.length} results
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
               className="border-green-200 hover:border-green-500"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <div className="flex items-center gap-1">
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              {Array.from({ length: Math.min(5, table.getPageCount()) }, (_, i) => {
+                const currentPage = table.getState().pagination.pageIndex;
+                const totalPages = table.getPageCount();
                 let pageNum;
+                
                 if (totalPages <= 5) {
-                  pageNum = i + 1;
-                } else if (currentPage <= 3) {
-                  pageNum = i + 1;
-                } else if (currentPage >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i;
+                  pageNum = i;
+                } else if (currentPage <= 2) {
+                  pageNum = i;
+                } else if (currentPage >= totalPages - 3) {
+                  pageNum = totalPages - 5 + i;
                 } else {
                   pageNum = currentPage - 2 + i;
                 }
@@ -612,13 +645,13 @@ export const DataTable: React.FC<DataTableProps> = ({
                     key={pageNum}
                     variant={currentPage === pageNum ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setCurrentPage(pageNum)}
+                    onClick={() => table.setPageIndex(pageNum)}
                     className={currentPage === pageNum 
                       ? "bg-green-500 hover:bg-green-600" 
                       : "border-green-200 hover:border-green-500"
                     }
                   >
-                    {pageNum}
+                    {pageNum + 1}
                   </Button>
                 );
               })}
@@ -626,8 +659,8 @@ export const DataTable: React.FC<DataTableProps> = ({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
               className="border-green-200 hover:border-green-500"
             >
               <ChevronRight className="h-4 w-4" />
